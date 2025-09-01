@@ -1,0 +1,1374 @@
+--- /usr/share/pve-manager/js/pvemanagerlib.js.bak
++++ /usr/share/pve-manager/js/pvemanagerlib.js
+@@ -3187,6 +3187,17 @@ Ext.define('PVE.Utils', {
+             }
+         },
+ 
++    lxc_entry_count: 256,
++
++    forEachLxcEntry: function(func) {
++	for (let i = 0; i < PVE.Utils.lxc_entry_count; i++) {
++	    let cont = func(i, `entry${i}`);
++	    if (!cont && cont !== undefined) {
++		return;
++	    }
++	}
++    },
++
+         hardware_counts: {
+             net: 32,
+             usb: 14,
+@@ -15678,6 +15689,10 @@ Ext.define('PVE.panel.GuestStatusView',
+             // in this specific api call
+             // we already have the correct value for the usage
+             calculate: Ext.identityFn,
++            cbind: {
++                hidden: '{isLxc}',
++                disabled: '{isLxc}',
++            },
+         },
+         {
+             itemId: 'memory',
+@@ -15685,16 +15700,9 @@ Ext.define('PVE.panel.GuestStatusView',
+             title: gettext('Memory usage'),
+             valueField: 'mem',
+             maxField: 'maxmem',
+-        },
+-        {
+-            itemId: 'swap',
+-            iconCls: 'fa fa-refresh fa-fw',
+-            title: gettext('SWAP usage'),
+-            valueField: 'swap',
+-            maxField: 'maxswap',
+             cbind: {
+-                hidden: '{isQemu}',
+-                disabled: '{isQemu}',
++                hidden: '{isLxc}',
++                disabled: '{isLxc}',
+             },
+         },
+         {
+@@ -15713,20 +15721,239 @@ Ext.define('PVE.panel.GuestStatusView',
+                     return Proxmox.Utils.render_size_usage(used, max);
+                 }
+             },
++            cbind: {
++                hidden: '{isLxc}',
++                disabled: '{isLxc}',
++            },
+         },
+         {
++            xtype: 'container',
++            layout: {
++                type: 'vbox',
++                align: 'stretch',
++            },
++            defaults: {
++                xtype: 'container',
++                layout: {
++                    type: 'hbox',
++                    align: 'stretch',
++                },
++                defaults: {
++                    xtype: 'pmxInfoWidget',
++                    flex: 1,
++                    padding: '2 10',
++                },
++            },
++            cbind: {
++                hidden: '{isQemu}',
++                disabled: '{isQemu}',
++            },
++            items: [
++                {
++                    items: [
++                        {
++                            itemId: 'lxcCpu',
++                            iconCls: 'fa fa-fw pmx-itype-icon-processor pmx-icon',
++                            title: gettext('CPU usage'),
++                            valueField: 'cpu',
++                            maxField: 'cpus',
++                            renderer: Proxmox.Utils.render_cpu_usage,
++                            // in this specific api call
++                            // we already have the correct value for the usage
++                            calculate: Ext.identityFn,
++                        },
++                        {
++                            itemId: 'lxcMemory',
++                            iconCls: 'fa fa-fw pmx-itype-icon-memory pmx-icon',
++                            title: gettext('RAM usage'),
++                            valueField: 'mem',
++                            maxField: 'maxmem',
++                        },
++                    ],
++                },
++                {
++                    items: [
++                        {
++                            itemId: 'lxcSwap',
++                            iconCls: 'fa fa-refresh fa-fw',
++                            title: gettext('SWAP usage'),
++                            valueField: 'swap',
++                            maxField: 'maxswap',
++                        },
++                        {
++                            itemId: 'lxcRootfs',
++                            iconCls: 'fa fa-hdd-o fa-fw',
++                            title: gettext('Rootfs size'),
++                            valueField: 'disk',
++                            maxField: 'maxdisk',
++                            printBar: false,
++                            renderer: function(used, max) {
++                                var me = this;
++                                me.setPrintBar(used > 0);
++                                if (used === 0) {
++                                    return Proxmox.Utils.render_size(max);
++                                } else {
++                                    return Proxmox.Utils.render_size_usage(used, max);
++                                }
++                            },
++                        },
++                    ],
++                },
++            ],
++        },	
++        {
+             xtype: 'box',
+             height: 15,
+         },
+         {
+-            itemId: 'ips',
+-            xtype: 'pveAgentIPView',
++            itemId: 'agentIPs',
++            xtype: 'pveIPView',
+             cbind: {
+                 rstore: '{rstore}',
+                 pveSelNode: '{pveSelNode}',
+                 hidden: '{isLxc}',
+                 disabled: '{isLxc}',
+             },
++            createUpdateStoreCallback: function(ipview, nodename, vmid) {
++                ipview.ipStore = Ext.create('Proxmox.data.UpdateStore', {
++                    interval: 10000,
++                    storeid: 'pve-qemu-agent-' + vmid,
++                    method: 'POST',
++                    proxy: {
++                        type: 'proxmox',
++                        url: '/api2/json/nodes/' + nodename + '/qemu/' + vmid + '/agent/network-get-interfaces',
++                    },
++                });
++                ipview.callParent();
++
++                ipview.mon(ipview.ipStore, 'load', function(_store, records, success) {
++                    if (records && records.length) {
++                        ipview.nics = records[0].data.result;
++                    } else {
++                        ipview.nics = undefined;
++                    }
++                    ipview.updateStatus(!success);
++                });
++            },
++            updateStatusCallback: function(ipview, unsuccessful, defaulttext) {
++                var text = defaulttext || gettext('No network information');
++                var more = false;
++                var ips;
++                if (unsuccessful) {
++                    text = gettext('Guest Agent not running');
++                } else if (ipview.agent && ipview.running) {
++                    if (Ext.isArray(ipview.nics) && ipview.nics.length) {
++                        more = true;
++                        ips = ipview.getDefaultIps(ipview.nics);
++                        if (ips.length !== 0) {
++                            text = ips.join('<br>');
++                        }
++                    } else if (ipview.nics && ipview.nics.error) {
++                        let msg = gettext('Cannot get info from Guest Agent<br>Error: {0}');
++                        text = Ext.String.format(msg, Ext.htmlEncode(ipview.nics.error.desc));
++                    }
++                } else if (ipview.agent) {
++                    text = gettext('Guest Agent not running');
++                } else {
++                    text = gettext('No Guest Agent configured');
++                }
++
++                var ipBox = ipview.down('#ipBox');
++                ipBox.update(text);
++
++                var moreBtn = ipview.down('#moreBtn');
++                moreBtn.setVisible(more);
++            },
++            startIPStoreCallback: function(ipview, store) {
++                let agentRec = store.getById('agent');
++                let state = store.getById('status');
++                var errorText;
++
++                ipview.agent = agentRec && agentRec.data.value === 1;
++                ipview.running = state && state.data.value === 'running';
++
++                var caps = Ext.state.Manager.get('GuiCap');
++
++                if (!caps.vms['VM.Monitor']) {
++                    errorText = gettext("Requires '{0}' Privileges");
++                    ipview.updateStatus(false, Ext.String.format(errorText, 'VM.Monitor'));
++                    return;
++                }
++
++                if (ipview.agent && ipview.running && ipview.ipStore.isStopped) {
++                    ipview.ipStore.startUpdate();
++                } else if (ipview.ipStore.isStopped) {
++                    ipview.updateStatus();
++                }
++            },
++        },
++        {
++            itemId: 'ctIPS',
++            xtype: 'pveIPView',
++            cbind: {
++                rstore: '{rstore}',
++                pveSelNode: '{pveSelNode}',
++                hidden: '{!isLxc}',
++                disabled: '{!isLxc}',
++            },
++            createUpdateStoreCallback: function(ipview, nodename, vmid) {
++                ipview.ipStore = Ext.create('Proxmox.data.UpdateStore', {
++                    interval: 10000,
++                    storeid: 'lxc-interfaces-' + vmid,
++                    method: 'GET',
++                    proxy: {
++                        type: 'proxmox',
++                        url: '/api2/json/nodes/' + nodename + '/lxc/' + vmid + '/interfaces',
++                    },
++                });
++                ipview.callParent();
++
++                ipview.mon(ipview.ipStore, 'load', function(_store, records, success) {
++                    if (records && records.length) {
++                        ipview.nics = records.map(r => r.data);
++                    } else {
++                        ipview.nics = undefined;
++                    }
++                    ipview.updateStatus(!success);
++                });
++            },
++            updateStatusCallback: function(ipview, _unsuccessful, defaulttext) {
++                var text = defaulttext || gettext('No network information');
++                var more = false;
++                var ips;
++                if (Ext.isArray(ipview.nics) && ipview.nics.length) {
++                    more = true;
++                    ips = ipview.getDefaultIps(ipview.nics);
++                    if (ips.length !== 0) {
++                        text = ips.join('<br>');
++                    }
++                }
++                var ipBox = ipview.down('#ipBox');
++                ipBox.update(text);
++
++                var moreBtn = ipview.down('#moreBtn');
++                moreBtn.setVisible(more);
++            },
++            startIPStoreCallback: function(ipview, store) {
++                let state = store.getById('status');
++                var errorText;
++
++                ipview.running = state && state.data.value === 'running';
++
++                var caps = Ext.state.Manager.get('GuiCap');
++
++                if (!caps.vms['VM.Audit']) {
++                    errorText = gettext("Requires '{0}' Privileges");
++                    ipview.updateStatus(false, Ext.String.format(errorText, 'VM.Audit'));
++                    return;
++                }
++
++                if (ipview.running && ipview.ipStore.isStopped) {
++                    ipview.ipStore.startUpdate();
++                } else if (ipview.ipStore.isStopped) {
++                    ipview.updateStatus();
++                }
++            },
+         },
+     ],
+ 
+@@ -36955,6 +37182,15 @@ Ext.define('PVE.lxc.FeaturesInputPanel',
+         },
+         {
+             xtype: 'proxmoxcheckbox',
++            fieldLabel: gettext('AutoDev'),
++            name: 'autodev',
++            bind: {
++            disabled: '{unprivileged}',
++            boxLabel: '{privilegedOnly}',
++            },
++        },
++        {
++            xtype: 'proxmoxcheckbox',
+             fieldLabel: gettext('Nesting'),
+             name: 'nesting',
+         },
+@@ -37052,6 +37288,300 @@ Ext.define('PVE.lxc.FeaturesEdit', {
+         },
+     ],
+ });
++Ext.define('PVE.lxc.InitCmdEdit', {
++    extend: 'Proxmox.window.Edit',
++    xtype: 'pveLxcInitCmdEdit',
++
++    subject: gettext('lxc.init.cmd'),
++    autoLoad: true,
++    width: 600,
++
++    items: [{
++	xtype: 'pveLxcInitCmdInputPanel',
++    }],
++});
++Ext.define('PVE.lxc.InitCmdInputPanel', {
++    extend: 'Proxmox.panel.InputPanel',
++    xtype: 'pveLxcInitCmdInputPanel',
++
++    items: [
++        {
++            fieldLabel: gettext('lxc.init.cmd'),
++            xtype: 'textfield',
++            name: 'initcmd',
++            allowBlank: true,
++            width: 500,
++        },
++    ],
++
++    onGetValues: function(values) {
++        if (!values.initcmd || values.initcmd.trim() === '') {
++	    values.delete = 'initcmd';
++	    delete values.initcmd;
++        }
++
++	return values;
++    },
++
++    setValues: function(values) {
++        this.callParent([values]);
++    },
++
++    initComponent: function() {
++        let me = this;
++        me.callParent();
++    },
++});
++Ext.define('PVE.lxc.AutomountEdit', {
++    extend: 'Proxmox.window.Edit',
++    xtype: 'pveLxcAutomountEdit',
++
++    subject: gettext('lxc.mount.auto'),
++    autoLoad: true,
++    width: 350,
++
++    items: [{
++	xtype: 'pveLxcAutomountInputPanel',
++    }],
++});
++Ext.define('PVE.lxc.AutomountInputPanel', {
++    extend: 'Proxmox.panel.InputPanel',
++    xtype: 'pveLxcAutomountInputPanel',
++
++    mountOptions: ['proc', 'sys', 'cgroup'],
++
++    items: [
++        {
++            xtype: 'proxmoxKVComboBox',
++            name: 'proc',
++            fieldLabel: gettext('proc'),
++            deleteEmpty: true,
++            comboItems: [
++                ['None', 'None'],
++                ['ro', 'ro'],
++                ['mixed', 'mixed'],
++                ['rw', 'rw']
++            ],
++            value: 'None',
++        },
++        {
++            xtype: 'proxmoxKVComboBox',
++            name: 'sys',
++            fieldLabel: gettext('sys'),
++            deleteEmpty: true,
++            comboItems: [
++                ['None', 'None'],
++                ['ro', 'ro'],
++                ['mixed', 'mixed'],
++                ['rw', 'rw']
++            ],
++            value: 'None',
++        },
++        {
++            xtype: 'proxmoxKVComboBox',
++            name: 'cgroup',
++            fieldLabel: gettext('cgroup'),
++            deleteEmpty: true,
++            comboItems: [
++                ['None', 'None'],
++                ['ro', 'ro'],
++                ['mixed', 'mixed'],
++                ['rw', 'rw']
++            ],
++            value: 'None',
++        },
++    ],
++
++    onGetValues: function(values) {
++        var result = [];
++
++        this.mountOptions.forEach(function(option) {
++            if (values[option] && values[option] !== 'None') {
++                result.push(option + '=' + values[option]);
++            }
++            delete values[option]
++        });
++
++	if (result.length) {
++	    values.automount = result.join(',');
++	} else {
++	    values.delete = 'automount';
++	}
++
++        return values;
++    },
++
++    setValues: function(values) {
++        var me = this;
++
++        me.mountOptions.forEach(function(option) {
++            if (values.automount && values.automount.includes(option + '=')) {
++                values[option] = values.automount.split(',').find(function(item) {
++                    return item.startsWith(option + '=');
++                }).split('=')[1];
++            }
++        });
++
++        this.callParent([values]);
++    },
++
++    initComponent: function() {
++        let me = this;
++        me.callParent();
++    },
++});
++Ext.define('PVE.lxc.EntryEdit', {
++    extend: 'Proxmox.window.Edit',
++
++    vmconfig: undefined,
++
++    isAdd: true,
++    width: 450,
++
++    initComponent: function() {
++	let me = this;
++
++	me.isCreate = !me.confid;
++
++	let ipanel = Ext.create('PVE.lxc.EntryInputPanel', {
++	    confid: me.confid,
++	    isCreate: me.isCreate,
++	    pveSelNode: me.pveSelNode,
++	});
++
++	let subject;
++	if (me.isCreate) {
++	    subject = gettext('Entry');
++	} else {
++	    subject = gettext('Entry') + ' (' + me.confid + ')';
++	}
++
++	Ext.apply(me, {
++	    subject: subject,
++	    items: [ipanel],
++	});
++
++	me.callParent();
++
++	me.load({
++	    success: function(response, options) {
++		ipanel.setVMConfig(response.result.data);
++		if (me.isCreate) {
++		    return;
++		}
++
++		let data = PVE.Parser.parsePropertyString(response.result.data[me.confid], 'path');
++
++		let values = {
++		    path1: data.path1,
++		    path2: data.path2,
++		    create: data.create,
++		};
++
++		ipanel.setValues(values);
++	    },
++	});
++    },
++});
++Ext.define('PVE.lxc.EntryInputPanel', {
++    extend: 'Proxmox.panel.InputPanel',
++    mixins: ['Proxmox.Mixin.CBind'],
++
++    autoComplete: false,
++
++    controller: {
++	xclass: 'Ext.app.ViewController',
++    },
++
++    setVMConfig: function(vmconfig) {
++	let me = this;
++	me.vmconfig = vmconfig;
++
++	if (me.isCreate) {
++	    PVE.Utils.forEachLxcEntry((i, name) => {
++		if (!Ext.isDefined(vmconfig[name])) {
++		    me.confid = name;
++		    me.down('field[name=entryid]').setValue(i);
++		    return false;
++		}
++		return undefined;
++	    });
++	}
++    },
++
++    onGetValues: function(values) {
++	let me = this;
++	let confid = me.isCreate ? "entry" + values.entryid : me.confid;
++	delete values.entryid;
++	let val = PVE.Parser.printPropertyString(values, 'path');
++	let ret = {};
++	ret[confid] = val;
++	return ret;
++    },
++
++    items: [
++	{
++	    xtype: 'proxmoxintegerfield',
++	    name: 'entryid',
++	    minValue: 0,
++	    maxValue: 6,
++	    hidden: true,
++	    allowBlank: false,
++	    disabled: true,
++	    cbind: {
++		disabled: '{!isCreate}',
++	    },
++	},
++	{
++	    xtype: 'textfield',
++	    name: 'path1',
++	    fieldLabel: gettext('Source Path'),
++	    labelWidth: 120,
++	    editable: true,
++	    allowBlank: false,
++	    emptyText: '/dev/xyz',
++	    validator: function(v) {
++		if (!v.startsWith('/dev/')) {
++		    return gettext("Path must start with /dev/");
++		}
++		if (!/^\/dev\/[\w/-]+$/.test(v)) {
++		    return gettext("Invalid path format");
++		}
++		return true;
++	    },
++	},
++	{
++	    xtype: 'textfield',
++	    name: 'path2',
++	    fieldLabel: gettext('Target Path'),
++	    labelWidth: 120,
++	    editable: true,
++	    allowBlank: false,
++	    emptyText: '/dev/xyz',
++	    validator: function(v) {
++		if (!v.startsWith('/dev/')) {
++		    return gettext("Path must start with /dev/");
++		}
++		if (!/^\/dev\/[\w/-]+$/.test(v)) {
++		    return gettext("Invalid path format");
++		}
++		return true;
++	    },
++	},
++	{
++	    xtype: 'combo',
++	    name: 'create',
++	    fieldLabel: gettext('Create Type'),
++	    labelWidth: 120,
++	    editable: false,
++	    allowBlank: false,
++	    store: ['file', 'dir'],
++	    value: 'file',
++	    triggerAction: 'all',
++	    emptyText: gettext('Select create type'),
++	},
++    ],
++});
+ Ext.define('PVE.lxc.MountPointInputPanel', {
+     extend: 'Proxmox.panel.InputPanel',
+     xtype: 'pveLxcMountPointInputPanel',
+@@ -37912,25 +38442,66 @@ Ext.define(
+ 
+             Proxmox.Utils.setErrorMask(me, true);
+ 
++            let nodename = me.pveSelNode.data.node;
++            let vmid = me.pveSelNode.data.vmid;
++
+             Proxmox.Utils.API2Request({
+-                url: me.url,
+-                failure: function (response, opts) {
++                url: `/nodes/${nodename}/lxc/${vmid}/interfaces`,
++                method: 'GET',
++                failure: function(response, opts) {
+                     Proxmox.Utils.setErrorMask(me, gettext('Error') + ': ' + response.htmlStatus);
+                 },
+-                success: function (response, opts) {
+-                    Proxmox.Utils.setErrorMask(me, false);
+-                    let result = Ext.decode(response.responseText);
+-                    me.dataCache = result.data || {};
+-                    let records = [];
+-                    for (const [key, value] of Object.entries(me.dataCache)) {
+-                        if (key.match(/^net\d+/)) {
+-                            let net = PVE.Parser.parseLxcNetwork(value);
+-                            net.id = key;
+-                            records.push(net);
+-                        }
+-                    }
+-                    me.store.loadData(records);
+-                    me.down('button[name=addButton]').setDisabled(records.length >= 32);
++                success: function(ifResponse, ifOpts) {
++                    Proxmox.Utils.API2Request({
++                        url: me.url,
++                        failure: function(response, opts) {
++                            Proxmox.Utils.setErrorMask(me, gettext('Error') + ': ' + response.htmlStatus);
++                        },
++                        success: function(confResponse, confOpts) {
++                            Proxmox.Utils.setErrorMask(me, false);
++
++                            let interfaces = [];
++                            for (const [, iface] of Object.entries(ifResponse?.result?.data || {})) {
++                                interfaces[iface['hardware-address']] = iface;
++                            }
++
++                            me.dataCache = confResponse.result.data || {};
++                            let records = [];
++                            for (const [key, value] of Object.entries(me.dataCache)) {
++                                if (key.match(/^net\d+/)) {
++                                    let config = PVE.Parser.parseLxcNetwork(value);
++                                    let net = structuredClone(config);
++                                    net.id = key;
++
++                                    let iface = interfaces[config.hwaddr.toLowerCase()];
++                                    if (iface) {
++                                        net.name = iface.name;
++                                        net.ip = [];
++                                        for (const i of iface['ip-addresses']) {
++                                            let ip_with_prefix = `${i['ip-address']}/${i.prefix}`;
++                                            if (i['ip-address-type'] === "inet") {
++                                                if (config.ip === ip_with_prefix) {
++                                                    net.ip.push(`${ip_with_prefix} (static)`);
++                                                } else {
++                                                    net.ip.push(`${ip_with_prefix} (dhcp)`);
++                                                }
++                                            } else if (i['ip-address-type'] === "inet6") {
++                                                if (config.ip6 === ip_with_prefix) {
++                                                    net.ip.push(`${ip_with_prefix} (static)`);
++                                                } else {
++                                                    net.ip.push(`${ip_with_prefix} (dhcp)`);
++                                                }
++                                            }
++                                        }
++                                    }
++                                    records.push(net);
++                                }
++                            }
++
++                            me.store.loadData(records);
++                            me.down('button[name=addButton]').setDisabled(records.length >= 32);
++                        },
++                    });
+                 },
+             });
+         },
+@@ -38064,7 +38635,7 @@ Ext.define(
+                     },
+                     {
+                         header: gettext('VLAN Tag'),
+-                        width: 80,
++                        width: 70,
+                         dataIndex: 'tag',
+                     },
+                     {
+@@ -38074,16 +38645,10 @@ Ext.define(
+                     },
+                     {
+                         header: gettext('IP address'),
+-                        width: 150,
++                        width: 200,
+                         dataIndex: 'ip',
+-                        renderer: function (value, metaData, rec) {
+-                            if (rec.data.ip && rec.data.ip6) {
+-                                return rec.data.ip + '<br>' + rec.data.ip6;
+-                            } else if (rec.data.ip6) {
+-                                return rec.data.ip6;
+-                            } else {
+-                                return rec.data.ip;
+-                            }
++                        renderer: function(_value, _metaData, rec) {
++                            return rec.data.ip.join("<br>");
+                         },
+                     },
+                     {
+@@ -38294,6 +38859,16 @@ Ext.define('PVE.lxc.Options', {
+                 defaultValue: Proxmox.Utils.noneText,
+                 editor: 'PVE.lxc.FeaturesEdit',
+             },
++			initcmd: {
++				header: gettext('lxc.init.cmd'),
++				defaultValue: Proxmox.Utils.noneText,
++				editor: 'PVE.lxc.InitCmdEdit',
++			},
++			automount: {
++				header: gettext('lxc.mount.auto'),
++				defaultValue: Proxmox.Utils.noneText,
++				editor: 'PVE.lxc.AutomountEdit',
++			},
+             hookscript: {
+                 header: gettext('Hookscript'),
+             },
+@@ -38360,11 +38935,22 @@ Ext.define('PVE.lxc.Options', {
+ 
+         me.callParent();
+ 
++        me.store.addFilter(new Ext.util.Filter({
++            filterFn: function(item) {
++                let ostype = me.store.getById('ostype');
++                if (ostype && ostype.data.value !== 'oci') {
++                    return !['initcmd', 'automount'].includes(item.data.key);
++                }
++                return true;
++            }
++        }));
++
+         me.on('activate', me.rstore.startUpdate);
+         me.on('destroy', me.rstore.stopUpdate);
+         me.on('deactivate', me.rstore.stopUpdate);
+ 
+-        me.mon(me.getStore(), 'datachanged', function () {
++        me.mon(me.getStore(), 'datachanged', function() {
++            me.store.filter();
+             set_button_status();
+         });
+     },
+@@ -38685,10 +39271,92 @@ Ext.define('PVE.lxc.RessourceView', {
+             };
+         });
+ 
++	    let entryeditor = Proxmox.UserName === 'root@pam' ? 'PVE.lxc.EntryEdit' : undefined;
++
++	    PVE.Utils.forEachLxcEntry(function(i, confid) {
++	        rows[confid] = {
++		    group: 8,
++		    order: i,
++		    tdCls: 'pve-itype-icon-pci',
++		    editor: entryeditor,
++		    header: gettext('Entry') + ' (' + confid + ')',
++	        };
++	    });
++
+         var baseurl = 'nodes/' + nodename + '/lxc/' + vmid + '/config';
+ 
+         me.selModel = Ext.create('Ext.selection.RowModel', {});
+ 
++        var createAddMenu = function() {
++            return new Ext.menu.Menu({
++            listeners: {
++                beforeshow: function(menu) {
++                Proxmox.Utils.API2Request({
++                    url: `/api2/extjs/nodes/${nodename}/lxc/${vmid}/config`,
++                    method: 'GET',
++                    success: function(response) {
++                    let ostype = response.result.data.ostype;
++                    let mountEntry = menu.items.find(item => item.text === gettext('Mount Entry'));
++                    let devicePassthrough = menu.items.find(item => item.text === gettext('Device Passthrough'));
++                    if (mountEntry && devicePassthrough) {
++                        mountEntry.setHidden(ostype !== 'oci');
++                        devicePassthrough.setHidden(ostype === 'oci');
++                    }
++                    },
++                });
++                }
++            },
++            items: [
++                {
++                text: gettext('Mount Point'),
++                iconCls: 'fa fa-fw fa-hdd-o black',
++                disabled: !caps.vms['VM.Config.Disk'],
++                handler: function() {
++                    Ext.create('PVE.lxc.MountPointEdit', {
++                    autoShow: true,
++                    url: `/api2/extjs/${baseurl}`,
++                    unprivileged: me.getObjectValue('unprivileged'),
++                    pveSelNode: me.pveSelNode,
++                    listeners: {
++                        destroy: () => me.reload(),
++                    },
++                    });
++                },
++                },
++                {
++                text: gettext('Mount Entry'),
++                iconCls: 'pve-itype-icon-pci',
++                disabled: Proxmox.UserName !== 'root@pam',
++                handler: function() {
++                    Ext.create('PVE.lxc.EntryEdit', {
++                    autoShow: true,
++                    url: `/api2/extjs/${baseurl}`,
++                    pveSelNode: me.pveSelNode,
++                    listeners: {
++                        destroy: () => me.reload(),
++                    },
++                    });
++                },
++                },
++                {
++                text: gettext('Device Passthrough'),
++                iconCls: 'pve-itype-icon-pci',
++                disabled: Proxmox.UserName !== 'root@pam',
++                handler: function() {
++                    Ext.create('PVE.lxc.DeviceEdit', {
++                    autoShow: true,
++                    url: `/api2/extjs/${baseurl}`,
++                    pveSelNode: me.pveSelNode,
++                    listeners: {
++                        destroy: () => me.reload(),
++                    },
++                    });
++                },
++                },
++            ],
++            });
++        };
++
+         var run_resize = function () {
+             var rec = me.selModel.getSelection()[0];
+             if (!rec) {
+@@ -38860,6 +39528,7 @@ Ext.define('PVE.lxc.RessourceView', {
+             let isUnusedDisk = key.match(/^unused\d+/);
+             let isUsedDisk = isDisk && !isUnusedDisk;
+             let isDevice = key.match(/^dev\d+/);
++            let isEntry = key.match(/^entry\d+/);
+ 
+             let noedit = isDelete || !rowdef.editor;
+             if (!noedit && Proxmox.UserName !== 'root@pam' && key.match(/^mp\d+$/)) {
+@@ -38875,7 +39544,7 @@ Ext.define('PVE.lxc.RessourceView', {
+             reassign_menuitem.setDisabled(isRootFS);
+             resize_menuitem.setDisabled(isUnusedDisk);
+ 
+-            remove_btn.setDisabled(!(isDisk || isDevice) || isRootFS || !diskCap || pending);
++            remove_btn.setDisabled(!(isDisk || isDevice || isEntry) || isRootFS || !diskCap || pending);
+             revert_btn.setDisabled(!pending);
+ 
+             remove_btn.setText(isUsedDisk ? remove_btn.altText : remove_btn.defaultText);
+@@ -38906,66 +39575,32 @@ Ext.define('PVE.lxc.RessourceView', {
+             }
+         };
+ 
+-        Ext.apply(me, {
+-            url: `/api2/json/nodes/${nodename}/lxc/${vmid}/pending`,
+-            selModel: me.selModel,
+-            interval: 2000,
+-            cwidth1: 170,
+-            tbar: [
+-                {
+-                    text: gettext('Add'),
+-                    menu: new Ext.menu.Menu({
+-                        items: [
+-                            {
+-                                text: gettext('Mount Point'),
+-                                iconCls: 'fa fa-fw fa-hdd-o black',
+-                                disabled: !caps.vms['VM.Config.Disk'],
+-                                handler: function () {
+-                                    Ext.create('PVE.lxc.MountPointEdit', {
+-                                        autoShow: true,
+-                                        url: `/api2/extjs/${baseurl}`,
+-                                        unprivileged: me.getObjectValue('unprivileged'),
+-                                        pveSelNode: me.pveSelNode,
+-                                        listeners: {
+-                                            destroy: () => me.reload(),
+-                                        },
+-                                    });
+-                                },
+-                            },
+-                            {
+-                                text: gettext('Device Passthrough'),
+-                                iconCls: 'pve-itype-icon-pci',
+-                                disabled: Proxmox.UserName !== 'root@pam',
+-                                handler: function () {
+-                                    Ext.create('PVE.lxc.DeviceEdit', {
+-                                        autoShow: true,
+-                                        url: `/api2/extjs/${baseurl}`,
+-                                        pveSelNode: me.pveSelNode,
+-                                        listeners: {
+-                                            destroy: () => me.reload(),
+-                                        },
+-                                    });
+-                                },
+-                            },
+-                        ],
+-                    }),
+-                },
+-                edit_btn,
+-                remove_btn,
+-                volumeaction_btn,
+-                revert_btn,
+-            ],
+-            rows: rows,
+-            sorterFn: sorterFn,
+-            editorConfig: {
+-                pveSelNode: me.pveSelNode,
+-                url: '/api2/extjs/' + baseurl,
+-            },
+-            listeners: {
+-                itemdblclick: me.run_editor,
+-                selectionchange: set_button_status,
+-            },
+-        });
++	    Ext.apply(me, {
++	        url: `/api2/json/nodes/${nodename}/lxc/${vmid}/pending`,
++	        selModel: me.selModel,
++	        interval: 2000,
++	        cwidth1: 170,
++	        tbar: [
++		    {
++		        text: gettext('Add'),
++		        menu: createAddMenu(),
++		    },
++		    edit_btn,
++		    remove_btn,
++		    volumeaction_btn,
++		    revert_btn,
++	        ],
++	        rows: rows,
++	        sorterFn: sorterFn,
++	        editorConfig: {
++		    pveSelNode: me.pveSelNode,
++		    url: '/api2/extjs/' + baseurl,
++	        },
++	        listeners: {
++		    itemdblclick: me.run_editor,
++		    selectionchange: set_button_status,
++	        },
++	    });
+ 
+         me.callParent();
+ 
+@@ -47864,239 +48499,175 @@ Ext.define('PVE.pool.Summary', {
+         me.callParent();
+     },
+ });
+-Ext.define('PVE.window.IPInfo', {
+-    extend: 'Ext.window.Window',
+-    width: 600,
+-    title: gettext('Guest Agent Network Information'),
+-    height: 300,
+-    layout: {
+-        type: 'fit',
+-    },
+-    modal: true,
+-    items: [
+-        {
+-            xtype: 'grid',
+-            store: {},
+-            emptyText: gettext('No network information'),
+-            viewConfig: {
+-                enableTextSelection: true,
+-            },
+-            columns: [
+-                {
+-                    dataIndex: 'name',
+-                    text: gettext('Name'),
+-                    renderer: Ext.htmlEncode,
+-                    flex: 3,
+-                },
+-                {
+-                    dataIndex: 'hardware-address',
+-                    text: gettext('MAC address'),
+-                    renderer: Ext.htmlEncode,
+-                    width: 140,
+-                },
+-                {
+-                    dataIndex: 'ip-addresses',
+-                    text: gettext('IP address'),
+-                    align: 'right',
+-                    flex: 4,
+-                    renderer: function (val) {
+-                        if (!Ext.isArray(val)) {
+-                            return '';
+-                        }
+-                        var ips = [];
+-                        val.forEach(function (ip) {
+-                            var addr = ip['ip-address'];
+-                            var pref = ip.prefix;
+-                            if (addr && pref) {
+-                                ips.push(Ext.htmlEncode(addr + '/' + pref));
+-                            }
+-                        });
+-                        return ips.join('<br>');
+-                    },
+-                },
+-            ],
+-        },
+-    ],
+-});
+-
+-Ext.define('PVE.qemu.AgentIPView', {
+-    extend: 'Ext.container.Container',
+-    xtype: 'pveAgentIPView',
+-
+-    layout: {
+-        type: 'hbox',
+-        align: 'top',
+-    },
+-
+-    nics: [],
+-
+-    items: [
+-        {
+-            xtype: 'box',
+-            html: '<i class="fa fa-exchange"></i> IPs',
+-        },
+-        {
+-            xtype: 'container',
+-            flex: 1,
+-            layout: {
+-                type: 'vbox',
+-                align: 'right',
+-                pack: 'end',
+-            },
+-            items: [
+-                {
+-                    xtype: 'label',
+-                    flex: 1,
+-                    itemId: 'ipBox',
+-                    style: {
+-                        'text-align': 'right',
+-                    },
+-                },
+-                {
+-                    xtype: 'button',
+-                    itemId: 'moreBtn',
+-                    hidden: true,
+-                    ui: 'default-toolbar',
+-                    handler: function (btn) {
+-                        let view = this.up('pveAgentIPView');
+-
+-                        var win = Ext.create('PVE.window.IPInfo');
+-                        win.down('grid').getStore().setData(view.nics);
+-                        win.show();
+-                    },
+-                    text: gettext('More'),
+-                },
+-            ],
+-        },
+-    ],
+-
+-    getDefaultIps: function (nics) {
+-        var _me = this;
+-        var ips = [];
+-        nics.forEach(function (nic) {
+-            if (
+-                nic['hardware-address'] &&
+-                nic['hardware-address'] !== '00:00:00:00:00:00' &&
+-                nic['hardware-address'] !== '0:0:0:0:0:0'
+-            ) {
+-                let nic_ips = nic['ip-addresses'] || [];
+-                nic_ips.forEach(function (ip) {
+-                    var p = ip['ip-address'];
+-                    // show 2 ips at maximum
+-                    if (ips.length < 2) {
+-                        ips.push(Ext.htmlEncode(p));
+-                    }
+-                });
+-            }
+-        });
+-
+-        return ips;
+-    },
+-
+-    startIPStore: function (store, records, success) {
+-        var me = this;
+-        let agentRec = store.getById('agent');
+-        let state = store.getById('status');
+-
+-        me.agent = agentRec && agentRec.data.value === 1;
+-        me.running = state && state.data.value === 'running';
+-
+-        var caps = Ext.state.Manager.get('GuiCap');
+-
+-        if (!caps.vms['VM.Monitor']) {
+-            let errorText = gettext("Requires '{0}' Privileges");
+-            me.updateStatus(false, Ext.String.format(errorText, 'VM.Monitor'));
+-            return;
+-        }
+-
+-        if (me.agent && me.running && me.ipStore.isStopped) {
+-            me.ipStore.startUpdate();
+-        } else if (me.ipStore.isStopped) {
+-            me.updateStatus();
+-        }
+-    },
+-
+-    updateStatus: function (unsuccessful, defaulttext) {
+-        var me = this;
+-        var text = defaulttext || gettext('No network information');
+-        var more = false;
+-        if (unsuccessful) {
+-            text = gettext('Guest Agent not running');
+-        } else if (me.agent && me.running) {
+-            if (Ext.isArray(me.nics) && me.nics.length) {
+-                more = true;
+-                let ips = me.getDefaultIps(me.nics);
+-                if (ips.length !== 0) {
+-                    text = ips.join('<br>');
+-                }
+-            } else if (me.nics && me.nics.error) {
+-                let msg = gettext('Cannot get info from Guest Agent<br>Error: {0}');
+-                text = Ext.String.format(msg, Ext.htmlEncode(me.nics.error.desc));
+-            }
+-        } else if (me.agent) {
+-            text = gettext('Guest Agent not running');
+-        } else {
+-            text = gettext('No Guest Agent configured');
+-        }
+-
+-        var ipBox = me.down('#ipBox');
+-        ipBox.update(text);
+-
+-        var moreBtn = me.down('#moreBtn');
+-        moreBtn.setVisible(more);
+-    },
+-
+-    initComponent: function () {
+-        var me = this;
+-
+-        if (!me.rstore) {
+-            throw 'rstore not given';
+-        }
+-
+-        if (!me.pveSelNode) {
+-            throw 'pveSelNode not given';
+-        }
+-
+-        var nodename = me.pveSelNode.data.node;
+-        var vmid = me.pveSelNode.data.vmid;
+-
+-        me.ipStore = Ext.create('Proxmox.data.UpdateStore', {
+-            interval: 10000,
+-            storeid: 'pve-qemu-agent-' + vmid,
+-            method: 'POST',
+-            proxy: {
+-                type: 'proxmox',
+-                url:
+-                    '/api2/json/nodes/' +
+-                    nodename +
+-                    '/qemu/' +
+-                    vmid +
+-                    '/agent/network-get-interfaces',
+-            },
+-        });
+-
+-        me.callParent();
+-
+-        me.mon(me.ipStore, 'load', function (store, records, success) {
+-            if (records && records.length) {
+-                me.nics = records[0].data.result;
+-            } else {
+-                me.nics = undefined;
+-            }
+-            me.updateStatus(!success);
+-        });
+-
+-        me.on('destroy', me.ipStore.stopUpdate, me.ipStore);
+-
+-        // if we already have info about the vm, use it immediately
+-        if (me.rstore.getCount()) {
+-            me.startIPStore(me.rstore, me.rstore.getData(), false);
+-        }
+-
+-        // check if the guest agent is there on every statusstore load
+-        me.mon(me.rstore, 'load', me.startIPStore, me);
+-    },
+-});
++Ext.define('PVE.window.IPInfo', {
++    extend: 'Ext.window.Window',
++    width: 600,
++    title: gettext('Network Information'),
++    height: 300,
++    layout: {
++        type: 'fit',
++    },
++    modal: true,
++    items: [
++        {
++            xtype: 'grid',
++            store: {},
++            emptyText: gettext('No network information'),
++            viewConfig: {
++                enableTextSelection: true,
++            },
++            columns: [
++                {
++                    dataIndex: 'name',
++                    text: gettext('Name'),
++                    renderer: Ext.htmlEncode,
++                    flex: 3,
++                },
++                {
++                    dataIndex: 'hardware-address',
++                    text: gettext('MAC address'),
++                    renderer: Ext.htmlEncode,
++                    width: 140,
++                },
++                {
++                    dataIndex: 'ip-addresses',
++                    text: gettext('IP address'),
++                    align: 'right',
++                    flex: 4,
++                    renderer: function (val) {
++                        if (!Ext.isArray(val)) {
++                            return '';
++                        }
++                        var ips = [];
++                        val.forEach(function (ip) {
++                            var addr = ip['ip-address'];
++                            var pref = ip.prefix;
++                            if (addr && pref) {
++                                ips.push(Ext.htmlEncode(addr + '/' + pref));
++                            }
++                        });
++                        return ips.join('<br>');
++                    },
++                },
++            ],
++        },
++    ],
++});
++
++Ext.define('PVE.IPView', {
++    extend: 'Ext.container.Container',
++    xtype: 'pveIPView',
++
++    layout: {
++        type: 'hbox',
++        align: 'top',
++    },
++
++    nics: [],
++    startIPStoreCallback: undefined,
++    updateStatusCallback: undefined,
++    createUpdateStoreCallback: undefined,
++
++    items: [
++        {
++            xtype: 'box',
++            html: '<i class="fa fa-exchange"></i> IPs',
++        },
++        {
++            xtype: 'container',
++            flex: 1,
++            layout: {
++                type: 'vbox',
++                align: 'right',
++                pack: 'end',
++            },
++            items: [
++                {
++                    xtype: 'label',
++                    flex: 1,
++                    itemId: 'ipBox',
++                    style: {
++                        'text-align': 'right',
++                    },
++                },
++                {
++                    xtype: 'button',
++                    itemId: 'moreBtn',
++                    hidden: true,
++                    ui: 'default-toolbar',
++                    handler: function (btn) {
++                        let view = this.up('pveIPView');
++
++                        var win = Ext.create('PVE.window.IPInfo');
++                        win.down('grid').getStore().setData(view.nics);
++                        win.show();
++                    },
++                    text: gettext('More'),
++                },
++            ],
++        },
++    ],
++
++    getDefaultIps: function (nics) {
++        var _me = this;
++        var ips = [];
++        nics.forEach(function (nic) {
++            if (
++                nic['hardware-address'] &&
++                nic['hardware-address'] !== '00:00:00:00:00:00' &&
++                nic['hardware-address'] !== '0:0:0:0:0:0'
++            ) {
++                let nic_ips = nic['ip-addresses'] || [];
++                nic_ips.forEach(function (ip) {
++                    var p = ip['ip-address'];
++                    // show 2 ips at maximum
++                    if (ips.length < 2) {
++                        ips.push(Ext.htmlEncode(p));
++                    }
++                });
++            }
++        });
++
++        return ips;
++    },
++
++    startIPStore: function (store, records, success) {
++        var me = this;
++        me.startIPStoreCallback(me, store);
++    },
++
++    updateStatus: function (unsuccessful, defaulttext) {
++        var me = this;
++        me.updateStatusCallback(me, unsuccessful, defaulttext);
++    },
++
++    initComponent: function () {
++        var me = this;
++
++        if (!me.rstore) {
++            throw 'rstore not given';
++        }
++
++        if (!me.pveSelNode) {
++            throw 'pveSelNode not given';
++        }
++
++        var nodename = me.pveSelNode.data.node;
++        var vmid = me.pveSelNode.data.vmid;
++
++        me.createUpdateStoreCallback(me, nodename, vmid);
++
++        me.on('destroy', me.ipStore.stopUpdate, me.ipStore);
++
++        // if we already have info about the vm, use it immediately
++        if (me.rstore.getCount()) {
++            me.startIPStore(me.rstore, me.rstore.getData(), false);
++        }
++
++        // check if the guest agent is there on every statusstore load
++        me.mon(me.rstore, 'load', me.startIPStore, me);
++    },
++});
+ Ext.define('PVE.qemu.AudioInputPanel', {
+     extend: 'Proxmox.panel.InputPanel',
+     xtype: 'pveAudioInputPanel',
