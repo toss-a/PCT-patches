@@ -43,7 +43,8 @@
 在 PVE 主机上 `控制台(Shell)` 中输入并运行
 
 ```bash
-wget -q https://raw.githubusercontent.com/lurenJBD/PCT-patches/refs/heads/pve-8/Patch-for-PCT-to-support-oci.sh
+git clone https://github.com/toss-a/PCT-patches -b pve-8
+cd PCT-patches
 bash Patch-for-PCT-to-support-oci.sh -c
 ```
 
@@ -147,7 +148,9 @@ bash Patch-for-PCT-to-support-oci.sh -c -R
 
 ## 3. 为 PCT WebUI 添加 IP 信息面板
 
-支持 `PVE 8.1 ~ 8.4`
+支持 `PVE 8.1 ~ 8.4.10` 
+
+注意8.4.11以上不支持！在执行Patch-for-PCT-to-support-oci.sh时已默认添加！
 
 感谢 `Gabriel Goller`(来自 pve-devel) 提供的参考
 

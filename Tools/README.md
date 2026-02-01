@@ -1,5 +1,5 @@
 # Docker to PCT Template Conversion Tool
-[中文文档](https://github.com/lurenJBD/PCT-pacthes/blob/main/Tools/README-CN.md) | [English](https://github.com/lurenJBD/PCT-pacthes/blob/main/Tools/README.md)
+[中文文档](https://github.com/toss-a/PCT-patches/blob/pve-8/Tools/README-CN.md) | [English](https://github.com/toss-a/PCT-patches/blob/pve-8/Tools/README.md)
 
 ## Introduction
 
@@ -24,7 +24,7 @@ Note that not all Docker images can be successfully converted to PCT container t
 ## Installation
 
 ```bash
-wget -q https://github.com/lurenJBD/PCT-pacthes/raw/refs/heads/main/Tools/Docker-To-PCT-EN-Beta.sh
+wget -q https://github.com/toss-a/PCT-patches/raw/refs/heads/pve-8/Tools/Docker-To-PCT-EN-Beta.sh
 chmod +x Docker-To-PCT-EN-Beta.sh
 ```
 

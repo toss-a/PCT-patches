@@ -43,7 +43,8 @@ Supported on `PVE 8.2 ~ 8.4`
 On the PVE host, run in the `Console (Shell)`:
 
 ```bash
-wget -q https://raw.githubusercontent.com/lurenJBD/PCT-patches/refs/heads/pve-8/Patch-for-PCT-to-support-oci.sh
+git clone https://github.com/toss-a/PCT-patches -b pve-8
+cd PCT-patches
 bash Patch-for-PCT-to-support-oci.sh -e
 ```
 
@@ -148,6 +149,8 @@ For more `lxc.init.cmd` parameters, see [redroid-doc](https://github.com/remote-
 ## 3. Add IP Information Panel to PCT WebUI
 
 Supported on `PVE 8.1 ~ 8.4`
+
+Note: Versions above 8.4.11 are not supported! Already added by default when executing Patch-for-PCT-to-support-oci.sh!
 
 Thanks to `Gabriel Goller` (from pve-devel) for reference
 
