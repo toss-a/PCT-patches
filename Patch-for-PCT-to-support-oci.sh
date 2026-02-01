@@ -242,6 +242,12 @@ arrays_equal() {
 	return 1
 }
 
+version_ge() {
+	local v1="$1"
+	local v2="$2"
+	[[ "$(printf '%s\n' "$v1" "$v2" | sort -V | head -n1)" == "$v2" ]]
+}
+
 load_module() {
 	local module=$1
 	local params=$2
@@ -406,10 +412,10 @@ if ! command -v patch &> /dev/null; then
 fi
 
 # Determine the patch directory based on PVE version
-if [[ "$PVE_VERSION" == "8.4.11" || "$PVE_VERSION" == "8.4.12" ]]; then
-    FIX_VERSION="8.4.11"
+if [[ "$PVE_VERSION" == 8.4.* ]] && version_ge "$PVE_VERSION" "8.4.11"; then
+	FIX_VERSION="8.4.11"
 else
-    FIX_VERSION=$(echo $PVE_VERSION |  awk -F'.' '{print $1"."$2".x"}' )
+	FIX_VERSION=$(echo $PVE_VERSION |  awk -F'.' '{print $1"."$2".x"}' )
 fi
 
 BACKUP_FILE_SUFFIX=$(echo $PVE_VERSION |  awk -F'.' '{print $1""$2""$3""}')
