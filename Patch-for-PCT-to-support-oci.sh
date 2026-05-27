@@ -502,7 +502,7 @@ load_module "mac80211_hwsim"
 printf_msg "所有操作已完成！" \
 	"All operations completed successfully!" \
 	"SUCCESS"
-printf_msg "作者: lurenjbd" \
+printf_msg "作者: toss-a lurenjbd" \
 	"Author: lurenjbd" \
 	"INFO"
 

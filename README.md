@@ -19,7 +19,7 @@ Add OCI container type support to PCT, enabling Redroid container startup
 
 > [!WARNING]
 > 1. PVE Cluster Mode: The script has not been tested in cluster environments. Use in cluster mode is not recommended.  
-> 2. Compatibility: This script is only tested and supported on **fresh installations** of `PVE 9.1.1 ~ 9.1.4`.  
+> 2. Compatibility: This script is only tested and supported on **fresh installations** of `PVE 9.1.1 ~ 9.1.4` and `PVE 9.2.2`.  
 >    There may be unknown issues on other versions or non-fresh installations.  
 >    Not tested on ARM64 PVE, not recommended for ARM64 users.  
 > 3. To update the patch script, **revert changes** before updating.
@@ -33,11 +33,11 @@ Add OCI container type support to PCT, enabling Redroid container startup
 ## 1. Add OCI Container Type Support to PCT
 
 > [!Tip]
-> It is recommended to use a fresh PVE 9.1 installation
+> It is recommended to use a fresh PVE 9.1 / 9.2 installation
 
 ### 1.1 Usage
 
-Supported on `PVE 9.1`
+Supported on `PVE 9.1 / 9.2`
 
 If you use PVE 8, please use the `pve-8` branch:
 `https://github.com/toss-a/PCT-patches/tree/pve-8`
